@@ -1,0 +1,273 @@
+echo 'package main' > ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo 'import (' >> ultimate-dns-v2.go
+echo '	"context"' >> ultimate-dns-v2.go
+echo '	"crypto/tls"' >> ultimate-dns-v2.go
+echo '	"encoding/base64"' >> ultimate-dns-v2.go
+echo '	"encoding/json"' >> ultimate-dns-v2.go
+echo '	"io"' >> ultimate-dns-v2.go
+echo '	"log"' >> ultimate-dns-v2.go
+echo '	"net"' >> ultimate-dns-v2.go
+echo '	"net/http"' >> ultimate-dns-v2.go
+echo '	"sync"' >> ultimate-dns-v2.go
+echo '	"github.com/miekg/dns"' >> ultimate-dns-v2.go
+echo '	"github.com/quic-go/quic-go"' >> ultimate-dns-v2.go
+echo ' )' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// Configuration' >> ultimate-dns-v2.go
+echo 'const (' >> ultimate-dns-v2.go
+echo '	// Server Ports' >> ultimate-dns-v2.go
+echo '	DNS_PORT   = ":5353"' >> ultimate-dns-v2.go
+echo '	HTTPS_PORT = ":8444"' >> ultimate-dns-v2.go
+echo '	DOT_PORT   = ":8853"' >> ultimate-dns-v2.go
+echo '	DOQ_PORT   = ":8854"' >> ultimate-dns-v2.go
+echo '	// Upstream DNS Resolver' >> ultimate-dns-v2.go
+echo '	UPSTREAM_DNS = "127.0.0.1:53"' >> ultimate-dns-v2.go
+echo '	// SSL Certificate Paths' >> ultimate-dns-v2.go
+echo '	SSL_CERT_PATH = "/etc/letsencrypt/live/doh.617east.com/fullchain.pem"' >> ultimate-dns-v2.go
+echo '	SSL_KEY_PATH  = "/etc/letsencrypt/live/doh.617east.com/privkey.pem"' >> ultimate-dns-v2.go
+echo ')' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// Stats structure' >> ultimate-dns-v2.go
+echo 'type Stats struct {' >> ultimate-dns-v2.go
+echo '	mu             sync.Mutex' >> ultimate-dns-v2.go
+echo '	TotalQueries   int' >> ultimate-dns-v2.go
+echo '	HTTPSQueries   int' >> ultimate-dns-v2.go
+echo '	DoTQueries     int' >> ultimate-dns-v2.go
+echo '	DoQQueries     int' >> ultimate-dns-v2.go
+echo '	DNSQueries     int' >> ultimate-dns-v2.go
+echo '	BlockedQueries int' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo 'var stats Stats' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// DNS handler' >> ultimate-dns-v2.go
+echo 'func dnsHandler(w dns.ResponseWriter, r *dns.Msg) {' >> ultimate-dns-v2.go
+echo '	stats.mu.Lock()' >> ultimate-dns-v2.go
+echo '	stats.TotalQueries++' >> ultimate-dns-v2.go
+echo '	stats.DNSQueries++' >> ultimate-dns-v2.go
+echo '	stats.mu.Unlock()' >> ultimate-dns-v2.go
+echo '	client := dns.Client{Net: "udp"}' >> ultimate-dns-v2.go
+echo '	resp, _, err := client.Exchange(r, UPSTREAM_DNS)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Printf("Failed to forward DNS query: %v", err)' >> ultimate-dns-v2.go
+echo '		dns.HandleFailed(w, r)' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	for _, a := range resp.Answer {' >> ultimate-dns-v2.go
+echo '		if a, ok := a.(*dns.A); ok {' >> ultimate-dns-v2.go
+echo '			if a.A.Equal(net.IPv4(0, 0, 0, 0)) {' >> ultimate-dns-v2.go
+echo '				stats.mu.Lock()' >> ultimate-dns-v2.go
+echo '				stats.BlockedQueries++' >> ultimate-dns-v2.go
+echo '				stats.mu.Unlock()' >> ultimate-dns-v2.go
+echo '				break' >> ultimate-dns-v2.go
+echo '			}' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	w.WriteMsg(resp)' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// DoH handler' >> ultimate-dns-v2.go
+echo 'func handleDoH(w http.ResponseWriter, r *http.Request ) {' >> ultimate-dns-v2.go
+echo '	stats.mu.Lock()' >> ultimate-dns-v2.go
+echo '	stats.TotalQueries++' >> ultimate-dns-v2.go
+echo '	stats.HTTPSQueries++' >> ultimate-dns-v2.go
+echo '	stats.mu.Unlock()' >> ultimate-dns-v2.go
+echo '	var query []byte' >> ultimate-dns-v2.go
+echo '	var err error' >> ultimate-dns-v2.go
+echo '	switch r.Method {' >> ultimate-dns-v2.go
+echo '	case http.MethodGet:' >> ultimate-dns-v2.go
+echo '		b64query := r.URL.Query( ).Get("dns")' >> ultimate-dns-v2.go
+echo '		query, err = base64.RawURLEncoding.DecodeString(b64query)' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			http.Error(w, "Invalid DNS query", http.StatusBadRequest )' >> ultimate-dns-v2.go
+echo '			return' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '	case http.MethodPost:' >> ultimate-dns-v2.go
+echo '		if r.Header.Get("Content-Type" ) != "application/dns-message" {' >> ultimate-dns-v2.go
+echo '			http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType )' >> ultimate-dns-v2.go
+echo '			return' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		query, err = io.ReadAll(r.Body)' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			http.Error(w, "Failed to read request body", http.StatusBadRequest )' >> ultimate-dns-v2.go
+echo '			return' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '	default:' >> ultimate-dns-v2.go
+echo '		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed )' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	msg := new(dns.Msg)' >> ultimate-dns-v2.go
+echo '	if err := msg.Unpack(query); err != nil {' >> ultimate-dns-v2.go
+echo '		http.Error(w, "Failed to unpack DNS message", http.StatusBadRequest )' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	client := &dns.Client{Net: "udp"}' >> ultimate-dns-v2.go
+echo '	resp, _, err := client.Exchange(msg, UPSTREAM_DNS)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Printf("Failed to resolve DoH query: %v", err)' >> ultimate-dns-v2.go
+echo '		http.Error(w, "DNS resolution failed", http.StatusInternalServerError )' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	packed, err := resp.Pack()' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		http.Error(w, "Failed to pack DNS response", http.StatusInternalServerError )' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	w.Header().Set("Content-Type", "application/dns-message")' >> ultimate-dns-v2.go
+echo '	w.Write(packed)' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// DoT handler' >> ultimate-dns-v2.go
+echo 'func handleDoTConnection(conn net.Conn, dnsServer string) {' >> ultimate-dns-v2.go
+echo '	defer conn.Close()' >> ultimate-dns-v2.go
+echo '	stats.mu.Lock()' >> ultimate-dns-v2.go
+echo '	stats.TotalQueries++' >> ultimate-dns-v2.go
+echo '	stats.DoTQueries++' >> ultimate-dns-v2.go
+echo '	stats.mu.Unlock()' >> ultimate-dns-v2.go
+echo '	for {' >> ultimate-dns-v2.go
+echo '		lenBuf := make([]byte, 2)' >> ultimate-dns-v2.go
+echo '		_, err := io.ReadFull(conn, lenBuf)' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			return' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		queryLen := int(lenBuf[0])<<8 | int(lenBuf[1])' >> ultimate-dns-v2.go
+echo '		queryBuf := make([]byte, queryLen)' >> ultimate-dns-v2.go
+echo '		_, err = io.ReadFull(conn, queryBuf)' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			return' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		client := &dns.Client{Net: "udp"}' >> ultimate-dns-v2.go
+echo '		msg := new(dns.Msg)' >> ultimate-dns-v2.go
+echo '		msg.Unpack(queryBuf)' >> ultimate-dns-v2.go
+echo '		resp, _, err := client.Exchange(msg, dnsServer)' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			log.Printf("Failed to resolve DoT query: %v", err)' >> ultimate-dns-v2.go
+echo '			continue' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		packed, err := resp.Pack()' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			continue' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		respLenBuf := make([]byte, 2)' >> ultimate-dns-v2.go
+echo '		respLenBuf[0] = byte(len(packed) >> 8)' >> ultimate-dns-v2.go
+echo '		respLenBuf[1] = byte(len(packed))' >> ultimate-dns-v2.go
+echo '		conn.Write(append(respLenBuf, packed...))' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// DoQ Listener' >> ultimate-dns-v2.go
+echo 'func listenAndServeDoQ(addr, certFile, keyFile, dnsServer string) {' >> ultimate-dns-v2.go
+echo '	tlsConf, err := tls.LoadX509KeyPair(certFile, keyFile)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Fatalf("Failed to load DoQ certificate and key: %v", err)' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	listener, err := quic.ListenAddr(addr, &tls.Config{Certificates: []tls.Certificate{tlsConf}, NextProtos: []string{"doq"}}, nil)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Fatalf("Failed to start DoQ listener: %v", err)' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	defer listener.Close()' >> ultimate-dns-v2.go
+echo '	log.Printf("DoQ server listening on %s", addr)' >> ultimate-dns-v2.go
+echo '	for {' >> ultimate-dns-v2.go
+echo '		conn, err := listener.Accept(context.Background())' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			log.Printf("Failed to accept DoQ connection: %v", err)' >> ultimate-dns-v2.go
+echo '			continue' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		go handleDoQStream(conn, dnsServer)' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// DoQ Stream Handler' >> ultimate-dns-v2.go
+echo 'func handleDoQStream(conn quic.Connection, dnsServer string) {' >> ultimate-dns-v2.go
+echo '	defer conn.CloseWithError(0, "")' >> ultimate-dns-v2.go
+echo '	stream, err := conn.AcceptStream(context.Background())' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Printf("Failed to accept DoQ stream: %v", err)' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	buf := make([]byte, 4096)' >> ultimate-dns-v2.go
+echo '	n, err := stream.Read(buf)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	query := buf[:n]' >> ultimate-dns-v2.go
+echo '	if len(query) < 2 {' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	dnsQuery := query[2:]' >> ultimate-dns-v2.go
+echo '	dnsConn, err := net.Dial("udp", dnsServer)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Printf("Failed to connect to DNS server: %v", err)' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	defer dnsConn.Close()' >> ultimate-dns-v2.go
+echo '	_, err = dnsConn.Write(dnsQuery)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Printf("Failed to send query to DNS server: %v", err)' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	respBuf := make([]byte, 4096)' >> ultimate-dns-v2.go
+echo '	n, err = dnsConn.Read(respBuf)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Printf("Failed to read response from DNS server: %v", err)' >> ultimate-dns-v2.go
+echo '		return' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	dnsResp := respBuf[:n]' >> ultimate-dns-v2.go
+echo '	respLen := uint16(len(dnsResp))' >> ultimate-dns-v2.go
+echo '	doqResp := []byte{byte(respLen >> 8), byte(respLen)}' >> ultimate-dns-v2.go
+echo '	doqResp = append(doqResp, dnsResp...)' >> ultimate-dns-v2.go
+echo '	_, err = stream.Write(doqResp)' >> ultimate-dns-v2.go
+echo '	if err != nil {' >> ultimate-dns-v2.go
+echo '		log.Printf("Failed to write DoQ response: %v", err)' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '	stream.Close()' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo '// Web interface handler' >> ultimate-dns-v2.go
+echo 'func handleWebInterface(w http.ResponseWriter, r *http.Request ) {' >> ultimate-dns-v2.go
+echo '	stats.mu.Lock()' >> ultimate-dns-v2.go
+echo '	defer stats.mu.Unlock()' >> ultimate-dns-v2.go
+echo '	w.Header().Set("Content-Type", "application/json")' >> ultimate-dns-v2.go
+echo '	json.NewEncoder(w).Encode(stats)' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
+echo '' >> ultimate-dns-v2.go
+echo 'func main() {' >> ultimate-dns-v2.go
+echo '	go func() {' >> ultimate-dns-v2.go
+echo '		server := &dns.Server{Addr: DNS_PORT, Net: "udp"}' >> ultimate-dns-v2.go
+echo '		dns.HandleFunc(".", dnsHandler)' >> ultimate-dns-v2.go
+echo '		log.Printf("Standard DNS server listening on %s", DNS_PORT)' >> ultimate-dns-v2.go
+echo '		if err := server.ListenAndServe(); err != nil {' >> ultimate-dns-v2.go
+echo '			log.Fatalf("Failed to start DNS server: %v", err)' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '	}()' >> ultimate-dns-v2.go
+echo '	go func() {' >> ultimate-dns-v2.go
+echo '		cert, err := tls.LoadX509KeyPair(SSL_CERT_PATH, SSL_KEY_PATH)' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			log.Fatalf("Failed to load DoT certificate: %v", err)' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		config := &tls.Config{Certificates: []tls.Certificate{cert}}' >> ultimate-dns-v2.go
+echo '		listener, err := tls.Listen("tcp", DOT_PORT, config)' >> ultimate-dns-v2.go
+echo '		if err != nil {' >> ultimate-dns-v2.go
+echo '			log.Fatalf("Failed to start DoT listener: %v", err)' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '		defer listener.Close()' >> ultimate-dns-v2.go
+echo '		log.Printf("DoT server listening on %s", DOT_PORT)' >> ultimate-dns-v2.go
+echo '		for {' >> ultimate-dns-v2.go
+echo '			conn, err := listener.Accept()' >> ultimate-dns-v2.go
+echo '			if err != nil {' >> ultimate-dns-v2.go
+echo '				log.Printf("DoT accept error: %v", err)' >> ultimate-dns-v2.go
+echo '				continue' >> ultimate-dns-v2.go
+echo '			}' >> ultimate-dns-v2.go
+echo '			go handleDoTConnection(conn, UPSTREAM_DNS)' >> ultimate-dns-v2.go
+echo '		}' >> ultimate-dns-v2.go
+echo '	}()' >> ultimate-dns-v2.go
+echo '	go listenAndServeDoQ(DOQ_PORT, SSL_CERT_PATH, SSL_KEY_PATH, UPSTREAM_DNS)' >> ultimate-dns-v2.go
+echo '	mux := http.NewServeMux( )' >> ultimate-dns-v2.go
+echo '	mux.HandleFunc("/dns-query", handleDoH)' >> ultimate-dns-v2.go
+echo '	mux.HandleFunc("/stats", handleWebInterface)' >> ultimate-dns-v2.go
+echo '	log.Printf("DoH server listening on %s", HTTPS_PORT)' >> ultimate-dns-v2.go
+echo '	if err := http.ListenAndServeTLS(HTTPS_PORT, SSL_CERT_PATH, SSL_KEY_PATH, mux ); err != nil {' >> ultimate-dns-v2.go
+echo '		log.Fatalf("Failed to start DoH server: %v", err)' >> ultimate-dns-v2.go
+echo '	}' >> ultimate-dns-v2.go
+echo '}' >> ultimate-dns-v2.go
